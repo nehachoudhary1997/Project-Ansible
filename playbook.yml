@@ -1,0 +1,104 @@
+---
+-
+  hosts: localhost
+  name: Play1
+  become: yes
+  vars:
+    db_password: ecompassword
+  tasks:
+    -
+      command: "sudo yum install -y firewalld"
+      name: "Install firewall"
+    -
+      name: "Start FirewallService"
+      service:
+        enabled: yes
+        name: firewalld
+        state: started
+        ##CHECK1- sudo service firewalld status
+
+    -
+      name: Install MariaDB
+      yum:
+        name: mariadb-server
+        state: present
+
+    -
+      name: "Start MariaDBService"
+      shell: |
+         sudo service mariadb start
+         sudo systemctl enable mariadb
+      #CHECK1- sudo service mariadb status
+
+    -
+      shell: |
+         sudo firewall-cmd --permanent --zone=public --add-port=3306/tcp
+         sudo firewall-cmd --reload
+      name: "Configure firewall for Database"
+
+    -
+      mysql_db:
+        name: ecomdb
+        state: present
+      name: "Create db ecomdb"
+      register: db_created
+
+    - name: Create database user with password and all database privileges and 'WITH GRANT OPTION'(if db was created)
+      mysql_user:
+        name: ecomuser2
+        password: ecompassword
+        priv: '*.*:ALL,GRANT'
+        state: present
+      when: db_created.changed
+
+    -
+      name: Creating TABLE products(if db was created)
+      mysql_db: name=ecomdb state=import target=db-load-script.sql
+      when: db_created.changed
+
+    -
+      name: "Start httpd"
+      service:
+        enabled: yes
+        state: started
+        name: "{{ item }}"
+      with_items:
+          - httpd
+
+    -
+      shell: |
+        sudo yum install -y httpd php php-mysql
+        sudo firewall-cmd --permanent --zone=public --add-port=80/tcp
+        sudo firewall-cmd --reload
+        sudo yum install -y git
+      name: "Install required packages"
+
+    - name: Change DirectoryIndex index.html to DirectoryIndex index.php to make the php page the default page
+      replace:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: index.html
+        replace: index.php
+
+    -
+      shell: |
+          sudo service httpd start
+          sudo systemctl enable httpd
+      name: Start httpd
+
+    - name: Git checkout
+      git:
+        repo: 'https://github.com/kodekloudhub/learning-app-ecommerce.git'
+        dest: /var/www/html/
+        clone: yes
+        update: yes
+        force: yes
+
+
+    - name: Update index.php
+      replace:
+        path: /var/www/html/index.php
+        regexp: 172.20.1.101
+        replace: localhost
+
+    - name: Test connection
+      shell: 'curl http://localhost'
